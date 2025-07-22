@@ -11,8 +11,13 @@ pipeline {
   stages {
     stage('Checkout') {
       steps {
-        sh 'echo "Checkout handled by Jenkins UI, listing workspace contents:"'
-        sh 'ls -l'
+        // THIS IS THE CRITICAL FIX
+        // It forces a full git clone, including the .git directory.
+        checkout scm
+
+        // You can add these lines for debugging to see the .git folder
+        sh 'echo "Workspace contents after checkout:"'
+        sh 'ls -la'
       }
     }
     stage('Build and Test') {
@@ -21,8 +26,9 @@ pipeline {
       }
     }
     stage('Static Code Analysis') {
+      // ... (no changes here)
       environment {
-        SONAR_URL = "http://3.82.248.0:9000"
+        SONAR_URL = "http://3.83.145.137:9000"
       }
       steps {
         withCredentials([string(credentialsId: 'sonarqube', variable: 'SONAR_AUTH_TOKEN')]) {
@@ -34,6 +40,7 @@ pipeline {
       }
     }
     stage('Build and Push Docker Image') {
+      // ... (no changes here)
       environment {
         DOCKER_IMAGE = "jerry943/ultimate-cicd:${BUILD_NUMBER}"
       }
@@ -52,29 +59,25 @@ pipeline {
     }
 
     stage('Update Deployment File') {
-        environment {
-            GIT_REPO_NAME = "Jenkins-ArgoCD-Pipeline"
-            GIT_USER_NAME = "Harshjerry"
+      // Your code here is now correct and will work after the fix above
+      environment {
+        GIT_REPO_NAME = "Jenkins-ArgoCD-Pipeline"
+        GIT_USER_NAME = "Harshjerry"
+      }
+      steps {
+        withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
+          sh '''
+            # We don't need 'cd ${WORKSPACE}' because the agent starts in the workspace root by default
+            git config user.email "harshdeep1043@gmail.com"
+            git config user.name "jerry6"
+            BUILD_NUMBER=${BUILD_NUMBER}
+            sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
+            git add java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
+            git commit -m "Update deployment image to version ${BUILD_NUMBER}"
+            git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} HEAD:main
+          '''
         }
-        steps {
-            withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
-                sh '''
-                    # Change directory back to the root of the workspace where .git is located
-                    cd ${WORKSPACE}
-
-                    # Now, run the git commands from the correct directory
-                    git config user.email "abhishek.xyz@gmail.com"
-                    git config user.name "Abhishek Veeramalla"
-                    BUILD_NUMBER=${BUILD_NUMBER}
-
-                    # Use the full path from the workspace root to the file
-                    sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
-                    git add java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
-                    git commit -m "Update deployment image to version ${BUILD_NUMBER}"
-                    git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} HEAD:main
-                '''
-            }
-        }
+      }
     }
   }
 }

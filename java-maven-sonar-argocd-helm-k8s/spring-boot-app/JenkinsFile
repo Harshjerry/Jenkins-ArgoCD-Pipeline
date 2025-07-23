@@ -1,102 +1,107 @@
-// This is the final, correct architecture. It uses different agents for different permissions.
 pipeline {
-    // This is the default agent for stages that DON'T need special permissions.
-    // It runs as your user 111, so it has access to the workspace.
-    agent {
-        docker {
-            image 'jerry943/maven-docker-agent-java17:v1'
-            registryUrl 'https://index.docker.io/v1/'
-            registryCredentialsId 'docker-cred'
-            args '--user 111:113 -v /var/run/docker.sock:/var/run/docker.sock'
+  agent {
+    docker {
+      image 'jerry943/maven-docker-agent-java17:v1'
+      registryUrl 'https://index.docker.io/v1/'
+      registryCredentialsId 'docker-cred'
+      args '--user root -v /var/run/docker.sock:/var/run/docker.sock'
+    }
+  }
+
+  stages {
+    stage('Checkout') {
+      steps {
+        // This is the CRITICAL first step.
+        // It performs a full clone and creates the .git directory.
+        checkout scm
+
+      }
+    }
+    stage('Build and Test') {
+      steps {
+        sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && mvn clean package'
+      }
+    }
+    stage('Static Code Analysis') {
+      environment {
+        SONAR_URL = "http://44.201.166.87:9000/"
+      }
+      steps {
+        withCredentials([string(credentialsId: 'sonarqube', variable: 'SONAR_AUTH_TOKEN')]) {
+          sh '''
+            cd java-maven-sonar-argocd-helm-k8s/spring-boot-app
+            mvn sonar:sonar -Dsonar.login=$SONAR_AUTH_TOKEN -Dsonar.host.url=${SONAR_URL}
+          '''
         }
+      }
+    }
+    stage('Build and Push Docker Image') {
+      environment {
+        DOCKER_IMAGE = "jerry943/ultimate-cicd:${BUILD_NUMBER}"
+      }
+      steps {
+        script {
+          sh '''
+            cd java-maven-sonar-argocd-helm-k8s/spring-boot-app
+            docker build -t ${DOCKER_IMAGE} .
+          '''
+          def dockerImage = docker.image("${DOCKER_IMAGE}")
+          docker.withRegistry('https://index.docker.io/v1/', "docker-cred") {
+            dockerImage.push()
+          }
+        }
+      }
     }
 
-    stages {
-        stage('Checkout') {
-            steps {
-                cleanWs() // Always clean first. This will now work.
-                checkout scm
-                sh 'echo "Workspace checked out successfully:" && ls -la'
-            }
+
+       stage('Update Deployment File') {
+        environment {
+            GIT_REPO_NAME = "Jenkins-ArgoCD-Pipeline"
+            GIT_USER_NAME = "Harshjerry"
         }
-        stage('Build and Test') {
-            steps {
-                sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && mvn clean package'
-            }
-        }
-        stage('Static Code Analysis') {
-            environment {
-                SONAR_URL = "http://44.201.166.87:9000/"
-            }
-            steps {
-                withCredentials([string(credentialsId: 'sonarqube', variable: 'SONAR_AUTH_TOKEN')]) {
-                  sh '''
-                    cd java-maven-sonar-argocd-helm-k8s/spring-boot-app
-                    mvn sonar:sonar -Dsonar.login=$SONAR_AUTH_TOKEN -Dsonar.host.url=${SONAR_URL}
-                  '''
-                }
-            }
-        }
-        // FOR THE NEXT TWO STAGES, WE NEED MORE POWER
-        stage('Build, Push, and Update') {
-            // OVERRIDE THE AGENT. This stage group runs as root.
-            agent {
-                docker {
-                    image 'jerry943/maven-docker-agent-java17:v1'
-                    registryUrl 'https://index.docker.io/v1/'
-                    registryCredentialsId 'docker-cred'
-                    // We run as root ONLY for the tasks that need it.
-                    args '--user root -v /var/run/docker.sock:/var/run/docker.sock'
-                }
-            }
-            stages {
-                stage('Build and Push Docker Image') {
-                    environment {
-                        DOCKER_IMAGE = "jerry943/ultimate-cicd:${BUILD_NUMBER}"
-                    }
-                    steps {
-                        script {
-                            // This now runs as root and can access the Docker socket
-                            sh '''
-                                cd java-maven-sonar-argocd-helm-k8s/spring-boot-app
-                                docker build -t ${DOCKER_IMAGE} .
-                            '''
-                            def dockerImage = docker.image("${DOCKER_IMAGE}")
-                            docker.withRegistry('https://index.docker.io/v1/', "docker-cred") {
-                                dockerImage.push()
-                            }
-                        }
-                    }
-                }
-                stage('Update Deployment File') {
-                    environment {
-                        GIT_REPO_NAME = "Jenkins-ArgoCD-Pipeline"
-                        GIT_USER_NAME = "Harshjerry"
-                    }
-                    steps {
-                        withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
-                            sh '''
-                                # Running as root, we can access and configure git
-                                git config user.email "harshdeep1043@gmail.com"
-                                git config user.name "Harshjerry-CI-Bot"
-                                
-                                git checkout main
-                                
-                                sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
-                                git add java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
-                                git commit -m "CI: Update deployment image to version ${BUILD_NUMBER}"
-                                git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} main
-                            '''
-                        }
-                    }
-                }
+        steps {
+            withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
+                sh '''
+                    echo "--- Entering final stage ---"
+                    cd ${WORKSPACE}
+                    
+                    # --- THIS IS THE FIX ---
+                    # Change ownership of all files in the current directory (.) to the root user.
+                    # The -R makes it recursive for all subdirectories.
+                    echo "Taking ownership of workspace files as root user..."
+                    chown -R root:root .
+                    
+                    echo "Directory contents after chown:"
+                    ls -la
+
+                    # Now, the 'root' user (who is running this script) owns the .git directory
+                    # and has permission to write to it. These commands will now succeed.
+                    echo "Attempting git configuration..."
+                    git config user.email "harshdeep1043@gmail.com"
+                    git config user.name "Harshjerry"
+
+                    # Adding this line to fix the "detached HEAD" issue for commits
+                    git checkout main
+
+                    echo "Updating deployment file and pushing to git..."
+                    sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
+                    git add java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
+                    git commit -m "Update deployment image to version ${BUILD_NUMBER}"
+                    # Pushing specifically to main
+                    git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} main
+                '''
             }
         }
     }
-    // This will run at the end to clean the workspace, preventing future lockouts.
-    post {
-        always {
-            cleanWs()
-        }
+  }
+
+  // --- ADDED THIS SECTION ---
+  // This block runs after all stages are finished, regardless of success or failure.
+  post {
+    always {
+        // This is a best practice to prevent permission issues between builds.
+        echo "Pipeline execution finished. Cleaning the workspace."
+        cleanWs()
     }
+  }
 }

@@ -4,28 +4,30 @@ pipeline {
       image 'jerry943/maven-docker-agent-java17:v1'
       registryUrl 'https://index.docker.io/v1/'
       registryCredentialsId 'docker-cred'
+      // All stages will run as root in this container
       args '--user root -v /var/run/docker.sock:/var/run/docker.sock'
+    }
+  }
+
+  // This block defines what happens AFTER the build. It's the key to the solution.
+  post {
+    always {
+      // This will run whether the pipeline succeeds or fails.
+      // It cleans the workspace to prevent permission errors on the next build.
+      echo 'Build finished. Cleaning up workspace for the next run...'
+      cleanWs()
     }
   }
 
   stages {
     stage('Checkout') {
       steps {
-        // --- THIS IS THE CRITICAL FIX ---
-        // It deletes the workspace from the previous build, including any
-        // files owned by 'root', before attempting to check out new code.
-        cleanWs()
-
-        // This will now succeed because the workspace is empty and writable
-        // by the default Jenkins user who performs the checkout.
+        // No need for cleanWs() here anymore. The checkout will now always
+        // happen on a clean slate because of the 'post' block.
         checkout scm
-
         sh 'echo "Workspace after checkout:" && ls -la'
       }
     }
-
-    // ... All your other stages (Build, Sonar, Docker Push) remain exactly the same ...
-    
     stage('Build and Test') {
       steps {
         sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && mvn clean package'
@@ -54,14 +56,13 @@ pipeline {
             cd java-maven-sonar-argocd-helm-k8s/spring-boot-app
             docker build -t ${DOCKER_IMAGE} .
           '''
-          def dockerImage = docker.image("${DOCK_IMAGE}")
+          def dockerImage = docker.image("${DOCKER_IMAGE}")
           docker.withRegistry('https://index.docker.io/v1/', "docker-cred") {
             dockerImage.push()
           }
         }
       }
     }
-
     stage('Update Deployment File') {
       environment {
         GIT_REPO_NAME = "Jenkins-ArgoCD-Pipeline"
@@ -71,13 +72,12 @@ pipeline {
         withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
           sh '''
             cd ${WORKSPACE}
-            # This is STILL needed because this 'sh' step runs as root
-            chown -R root:root .
+            # No 'chown' is needed because all stages now run as root in the same agent.
             
             git config user.email "harshdeep1043@gmail.com"
-            git config user.name "jerry7"
+            git config user.name "jerry-ci"
             
-            # This is also STILL needed to commit to a branch
+            # Switch to the 'main' branch to commit changes
             git checkout main
             
             sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml

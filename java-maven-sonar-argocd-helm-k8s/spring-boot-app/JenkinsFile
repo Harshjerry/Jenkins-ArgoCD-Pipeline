@@ -64,29 +64,27 @@ pipeline {
         steps {
             withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
                 sh '''
-                    echo "--- Entering final stage ---"
                     cd ${WORKSPACE}
-                    
-                    # --- THIS IS THE FIX ---
-                    # Change ownership of all files in the current directory (.) to the root user.
-                    # The -R makes it recursive for all subdirectories.
-                    echo "Taking ownership of workspace files as root user..."
+                    echo "Taking ownership of workspace files..."
                     chown -R root:root .
                     
-                    echo "Directory contents after chown:"
-                    ls -la
-
-                    # Now, the 'root' user (who is running this script) owns the .git directory
-                    # and has permission to write to it. These commands will now succeed.
-                    echo "Attempting git configuration..."
+                    echo "Configuring git user..."
                     git config user.email "harshdeep1043@gmail.com"
                     git config user.name "jerry7"
 
+                    # --- THIS IS THE FIX ---
+                    # Tell git to switch from the "detached HEAD" state to the actual 'main' branch
+                    # so that we can commit changes to it.
+                    echo "Checking out the main branch to be able to commit..."
+                    git checkout main
+                    
                     echo "Updating deployment file and pushing to git..."
                     sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
                     git add java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
                     git commit -m "Update deployment image to version ${BUILD_NUMBER}"
-                    git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} HEAD:main
+                    
+                    # Push the main branch back to the GitHub repository
+                    git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} main
                 '''
             }
         }

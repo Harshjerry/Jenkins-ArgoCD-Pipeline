@@ -55,7 +55,8 @@ pipeline {
       }
     }
 
-    stage('Update Deployment File') {
+   
+       stage('Update Deployment File') {
         environment {
             GIT_REPO_NAME = "Jenkins-ArgoCD-Pipeline"
             GIT_USER_NAME = "Harshjerry"
@@ -63,22 +64,23 @@ pipeline {
         steps {
             withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
                 sh '''
-                    # STEP 1: Add debugging to see what's happening.
                     echo "--- Entering final stage ---"
-                    echo "Current directory is:"
-                    pwd
-                    echo "Forcing directory to workspace root: ${WORKSPACE}"
-                    
-                    # STEP 2: Force change to the workspace root, just to be safe.
                     cd ${WORKSPACE}
                     
-                    echo "Directory contents (looking for .git folder):"
-                    ls -la
+                    # --- THIS IS THE FIX ---
+                    # Change ownership of all files in the current directory (.) to the root user.
+                    # The -R makes it recursive for all subdirectories.
+                    echo "Taking ownership of workspace files as root user..."
+                    chown -R root:root .
                     
-                    # STEP 3: Now run the git commands.
+                    echo "Directory contents after chown:"
+                    ls -la
+
+                    # Now, the 'root' user (who is running this script) owns the .git directory
+                    # and has permission to write to it. These commands will now succeed.
                     echo "Attempting git configuration..."
                     git config user.email "harshdeep1043@gmail.com"
-                    git config user.name "jerry6"
+                    git config user.name "jerry7"
 
                     echo "Updating deployment file and pushing to git..."
                     sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml

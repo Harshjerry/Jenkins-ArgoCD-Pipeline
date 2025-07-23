@@ -11,17 +11,16 @@ pipeline {
   stages {
     stage('Checkout') {
       steps {
-        // This is the CRITICAL first step.
-        // It performs a full clone and creates the .git directory.
         checkout scm
-
       }
     }
+
     stage('Build and Test') {
       steps {
         sh 'cd java-maven-sonar-argocd-helm-k8s/spring-boot-app && mvn clean package'
       }
     }
+
     stage('Static Code Analysis') {
       environment {
         SONAR_URL = "http://44.201.166.87:9000/"
@@ -35,6 +34,7 @@ pipeline {
         }
       }
     }
+
     stage('Build and Push Docker Image') {
       environment {
         DOCKER_IMAGE = "jerry943/ultimate-cicd:${BUILD_NUMBER}"
@@ -53,55 +53,48 @@ pipeline {
       }
     }
 
+    stage('Update Deployment File') {
+      environment {
+        GIT_REPO_NAME = "Jenkins-ArgoCD-Pipeline"
+        GIT_USER_NAME = "Harshjerry"
+      }
+      steps {
+        withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
+          sh '''
+            echo "--- Entering final stage ---"
+            cd ${WORKSPACE}
 
-       stage('Update Deployment File') {
-        environment {
-            GIT_REPO_NAME = "Jenkins-ArgoCD-Pipeline"
-            GIT_USER_NAME = "Harshjerry"
+            echo "Taking ownership of workspace files as root user..."
+            chown -R root:root .
+            echo "Directory contents after chown:"
+            ls -la
+
+            echo "Attempting git configuration..."
+            git config user.email "harshdeep1043@gmail.com"
+            git config user.name "Harshjerry"
+
+            git checkout main
+
+            echo "Updating deployment file and pushing to git..."
+            sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
+
+            if git diff --quiet; then
+              echo "No changes to commit."
+            else
+              git add java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
+              git commit -m "Update deployment image to version ${BUILD_NUMBER}"
+              git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} main
+            fi
+          '''
         }
-        steps {
-            withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
-                sh '''
-                    echo "--- Entering final stage ---"
-                    cd ${WORKSPACE}
-                    
-                    # --- THIS IS THE FIX ---
-                    # Change ownership of all files in the current directory (.) to the root user.
-                    # The -R makes it recursive for all subdirectories.
-                    echo "Taking ownership of workspace files as root user..."
-                    chown -R root:root .
-                    
-                    echo "Directory contents after chown:"
-                    ls -la
-
-                    # Now, the 'root' user (who is running this script) owns the .git directory
-                    # and has permission to write to it. These commands will now succeed.
-                    echo "Attempting git configuration..."
-                    git config user.email "harshdeep1043@gmail.com"
-                    git config user.name "Harshjerry"
-
-                    # Adding this line to fix the "detached HEAD" issue for commits
-                    git checkout main
-
-                    echo "Updating deployment file and pushing to git..."
-                    sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
-                    git add java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
-                    git commit -m "Update deployment image to version ${BUILD_NUMBER}"
-                    # Pushing specifically to main
-                    git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} main
-                '''
-            }
-        }
+      }
     }
   }
 
-  // --- ADDED THIS SECTION ---
-  // This block runs after all stages are finished, regardless of success or failure.
   post {
     always {
-        // This is a best practice to prevent permission issues between builds.
-        echo "Pipeline execution finished. Cleaning the workspace."
-        cleanWs()
+      echo "Pipeline execution finished. Cleaning the workspace."
+      cleanWs()
     }
   }
 }

@@ -58,38 +58,21 @@ pipeline {
         GIT_REPO_NAME = "Jenkins-ArgoCD-Pipeline"
         GIT_USER_NAME = "Harshjerry"
       }
-      steps {
-        withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
-          sh '''
-            echo "--- Entering final stage ---"
-            cd ${WORKSPACE}
-            
-            echo "Taking ownership of workspace files as root user..."
-            chown -R root:root .
-            echo "Directory contents after chown:"
-            ls -la
-
-            echo "Attempting git configuration..."
-            git config user.email "harshdeep1043@gmail.com"
-            git config user.name "Harshjerry"
-
-            git checkout main
-
-            echo "Updating deployment file and pushing to git..."
-            sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
-
-            # Check if anything changed before committing
-            if ! git diff --quiet; then
-              git add java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
-              git commit -m "Update deployment image to version ${BUILD_NUMBER}"
-              git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} main
-            else
-              echo "No changes to commit."
-            fi
-          '''
+        steps {
+            withCredentials([string(credentialsId: 'github', variable: 'GITHUB_TOKEN')]) {
+                sh '''
+                    git config user.email "harshdeep1043@gmail.com"
+                    git config user.name "Harshjerry"
+                    BUILD_NUMBER=${BUILD_NUMBER}
+                    sed -i "s/replaceImageTag/${BUILD_NUMBER}/g" java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
+                    git add java-maven-sonar-argocd-helm-k8s/spring-boot-app-manifests/deployment.yml
+                    git commit -m "Update deployment image to version ${BUILD_NUMBER}"
+                    git push https://${GITHUB_TOKEN}@github.com/${GIT_USER_NAME}/${GIT_REPO_NAME} HEAD:main
+                '''
+            }
         }
-      }
     }
+ }
   }
 
   post {

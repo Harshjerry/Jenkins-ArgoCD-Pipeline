@@ -1,4 +1,5 @@
 # Jenkins-ArgoCD pipeline
+<img width="820" height="394" alt="jenkins_pipeline" src="https://github.com/user-attachments/assets/084d64db-e669-4f75-9f89-fea1e5356bb0" />
 
 ## Installation on EC2 Instance
 
